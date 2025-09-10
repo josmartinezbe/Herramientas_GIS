@@ -1,0 +1,234 @@
+# -*- coding: utf-8 -*-
+# Funciona en ArcGIS Desktop 10.x / ArcGIS Pro (arcpy)
+import arcpy, os, datetime
+
+# =============== CONFIG ===============
+EXCEL_PATH     = r"D:\XLS_Temporal\MuestreoFloraResultados_ODL_BHM.xlsx"
+SHEET_DATOS    = "Datos$"         # hoja con tus datos
+SHEET_DICT     = "Diccionario$"   # hoja con el diccionario (CAMPO, TIPO_DE_DATO, TAMAÑO)
+WORK_GDB       = r"D:\XLS_Temporal\250421_GDB_ICA17_ODL_LAM2965.gdb"
+OUT_GDB        = r"D:\XLS_Temporal\GDB_ANLA_sandbox.gdb"
+OUT_TABLE_NAME = "Seg_EspSembradaTB_CLEAN"   # tabla nueva limpia
+LOG_PATH       = r"D:\XLS_Temporal\logs\clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
+# =====================================
+
+# Mapa de tipos del diccionario ANLA -> ArcGIS
+TYPE_MAP = {
+    "single": ("FLOAT", 7, 6),         # (type, precision, scale) por defecto
+    "double": ("DOUBLE", 15, 8),
+    "smallinteger": ("SHORT", None, None),
+    "longinteger": ("LONG", None, None),
+    "string": ("TEXT", None, None),    # la longitud viene en TAMAÑO
+    "date": ("DATE", None, None)
+}
+
+# Si NO hay diccionario: defaults por nombre de campo (opcional)
+TYPE_MAP_DEFAULTS = {
+    # "DEN_SIEMB": ("FLOAT", 7, 6),
+    # "MANT_PER":  ("SHORT", None, None),
+}
+
+arcpy.env.overwriteOutput = True
+
+def log(msg):
+    arcpy.AddMessage(msg)
+    try:
+        with open(LOG_PATH, "a") as f:
+            f.write((msg + "\n").encode("utf-8"))
+    except:
+        pass
+
+def ensure_gdb(gdb):
+    if not arcpy.Exists(gdb):
+        folder, name = os.path.split(gdb)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        arcpy.CreateFileGDB_management(folder, name)
+
+def excel_to_table(xls, sheet, out_gdb, out_name):
+    out_tab = os.path.join(out_gdb, out_name)
+    if arcpy.Exists(out_tab):
+        arcpy.Delete_management(out_tab)
+    arcpy.ExcelToTable_conversion(xls, out_tab, sheet)
+    return out_tab
+
+def read_schema_from_dict(dict_table):
+    """Lee CAMPO, TIPO_DE_DATO, TAMAÑO de la tabla diccionario (ya en GDB)"""
+    schema = {}
+    with arcpy.da.SearchCursor(dict_table, ["CAMPO","TIPO_DE_DATO","TAMAÑO"]) as cur:
+        for campo, tipo, tam in cur:
+            if not campo:
+                continue
+            t = (tipo or "").strip().lower()
+            if t not in TYPE_MAP:
+                raise ValueError(u"Tipo no soportado en diccionario: {}".format(tipo))
+            gis_type, prec_def, scale_def = TYPE_MAP[t]
+            # Longitud para text viene en TAMAÑO
+            length = None
+            if gis_type == "TEXT":
+                length = int(tam) if tam not in (None, "", " ") else 255
+            # Para numéricos, permite prec/scale por defecto del mapa
+            schema[campo] = {
+                "type": gis_type,
+                "precision": prec_def,
+                "scale": scale_def,
+                "length": length
+            }
+    return schema
+
+def merge_defaults(schema, defaults):
+    """Aplica defaults por nombre de campo cuando no hay diccionario."""
+    sch = dict(schema) if schema else {}
+    for k, (tp, pr, sc) in defaults.items():
+        if k not in sch:
+            sch[k] = {"type": tp, "precision": pr, "scale": sc, "length": (255 if tp=="TEXT" else None)}
+    return sch
+
+def create_clean_table(out_gdb, out_name, schema):
+    out = os.path.join(out_gdb, out_name)
+    if arcpy.Exists(out):
+        arcpy.Delete_management(out)
+    arcpy.CreateTable_management(out_gdb, out_name)
+    for fld, spec in schema.items():
+        t = spec["type"]
+        if t == "TEXT":
+            arcpy.AddField_management(out, fld, "TEXT", field_length=spec.get("length",255))
+        elif t in ("FLOAT","DOUBLE"):
+            arcpy.AddField_management(out, fld, t,
+                                      field_precision=spec.get("precision"),
+                                      field_scale=spec.get("scale"))
+        elif t in ("SHORT","LONG"):
+            arcpy.AddField_management(out, fld, t)
+        elif t == "DATE":
+            arcpy.AddField_management(out, fld, "DATE")
+        else:
+            raise ValueError("Tipo no soportado: {}".format(t))
+    return out
+
+# --- helpers de coerción ---
+def to_float(v):
+    try:
+        if v is None: return None
+        if isinstance(v, basestring):
+            v = v.replace(',', '.')
+        return float(v)
+    except: return None
+
+def to_int(v):
+    try:
+        if v is None: return None
+        if isinstance(v, basestring):
+            v = v.replace(',', '.')
+        return int(round(float(v)))
+    except: return None
+
+def to_text(v, n):
+    if v is None: return None
+    try:
+        s = unicode(v)
+    except:
+        s = str(v)
+    return s[:n]
+
+def to_date(v):
+    import datetime
+    if v in (None, ''): return None
+    if isinstance(v, datetime.datetime): return v
+    fmts = ["%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%Y/%m/%d","%d/%m/%Y %H:%M:%S"]
+    for f in fmts:
+        try: return datetime.datetime.strptime(v, f)
+        except: pass
+    return None
+
+def round_to(v, n):
+    try:
+        if v is None: return None
+        return round(float(v), n)
+    except:
+        return None
+
+def build_row_converter(in_fields, schema):
+    """
+    Devuelve una función que:
+      - toma una tupla de valores de 'in_fields'
+      - devuelve una tupla ya convertida y en el orden de 'schema.keys()'
+    """
+    # Orden final (destino)
+    out_fields = list(schema.keys())
+    # Mapa desde input index
+    index = {f: i for i, f in enumerate(in_fields)}
+
+    # Prepara funciones por campo
+    funcs = []
+    for f in out_fields:
+        spec = schema[f]
+        t = spec["type"]
+        if f not in index:
+            # Campo no existe en Excel -> siempre None
+            funcs.append(lambda row, _f=f: None)
+            continue
+
+        i = index[f]
+        if t == "TEXT":
+            L = spec.get("length", 255)
+            funcs.append(lambda row, ii=i, LL=L: to_text(row[ii], LL))
+        elif t in ("FLOAT","DOUBLE"):
+            prec = spec.get("scale", 6)  # usamos 'scale' como # decimales
+            funcs.append(lambda row, ii=i, dd=prec: round_to(to_float(row[ii]), dd if dd is not None else 6))
+        elif t in ("SHORT","LONG"):
+            funcs.append(lambda row, ii=i: to_int(row[ii]))
+        elif t == "DATE":
+            funcs.append(lambda row, ii=i: to_date(row[ii]))
+        else:
+            funcs.append(lambda row, ii=i: row[ii])
+
+    def convert(row):
+        return tuple(fn(row) for fn in funcs)
+
+    return convert, out_fields
+
+def main():
+    ensure_gdb(WORK_GDB); ensure_gdb(OUT_GDB)
+    if not os.path.isdir(os.path.dirname(LOG_PATH)): os.makedirs(os.path.dirname(LOG_PATH))
+
+    log("=== Limpiador XLSX → Tabla GDB (tipos correctos) ===")
+    log("Excel: {}".format(EXCEL_PATH))
+
+    # 1) XLSX -> tablas temporales en GDB
+    t_datos = excel_to_table(EXCEL_PATH, SHEET_DATOS, WORK_GDB, "t_datos_xls")
+    # Diccionario es opcional, pero recomendado
+    schema = {}
+    try:
+        t_dict  = excel_to_table(EXCEL_PATH, SHEET_DICT, WORK_GDB, "t_dict_xls")
+        schema  = read_schema_from_dict(t_dict)
+        log(u"Diccionario leído: {} campos".format(len(schema)))
+    except Exception as e:
+        log(u"(Aviso) No se pudo leer la hoja Diccionario$: {}. Usaré TYPE_MAP_DEFAULTS".format(e))
+
+    # 2) Aplicar defaults si procede
+    schema = merge_defaults(schema, TYPE_MAP_DEFAULTS)
+    if not schema:
+        # si aún no hay esquema, infiérelo como TEXT de longitud 255 (seguro)
+        schema = {f.name: {"type":"TEXT", "length":255, "precision":None, "scale":None}
+                  for f in arcpy.ListFields(t_datos) if f.type not in ("OID","Geometry")}
+        log(u"(Aviso) Sin diccionario: todos los campos serán TEXT(255)")
+
+    # 3) Crear tabla limpia con el esquema deseado
+    out_tbl = create_clean_table(OUT_GDB, OUT_TABLE_NAME, schema)
+
+    # 4) Insertar filas convirtiendo tipos
+    in_fields  = [f.name for f in arcpy.ListFields(t_datos) if f.type not in ("OID","Geometry")]
+    convert, out_fields = build_row_converter(in_fields, schema)
+
+    inserted = 0
+    with arcpy.da.SearchCursor(t_datos, in_fields) as scur, \
+         arcpy.da.InsertCursor(out_tbl, out_fields) as icur:
+        for row in scur:
+            icur.insertRow(convert(row))
+            inserted += 1
+
+    log(u"Salida: {} ({} filas insertadas)".format(out_tbl, inserted))
+    log(u"Log guardado en: {}".format(LOG_PATH))
+
+if __name__ == "__main__":
+    main()
