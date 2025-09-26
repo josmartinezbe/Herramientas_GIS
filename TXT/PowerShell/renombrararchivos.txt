@@ -1,0 +1,10 @@
+# Configuración
+$path   = 'D:\6_MAPAS'
+$suffix = ' en el marco de la MLA'
+
+Get-ChildItem -Path $path -Filter *.jpg -File |
+  Where-Object { $_.BaseName -notlike "*$suffix" } |
+  ForEach-Object {
+    $newName = $_.BaseName + $suffix + $_.Extension
+    Write-Host "[SIMULACIÓN] $($_.Name) -> $newName"
+  }

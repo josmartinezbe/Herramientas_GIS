@@ -1,0 +1,15 @@
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\bin\Debug\net8.0\ConsoleApp1.exe
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\bin\Debug\net8.0\ConsoleApp1.deps.json
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\bin\Debug\net8.0\ConsoleApp1.runtimeconfig.json
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\bin\Debug\net8.0\ConsoleApp1.dll
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\bin\Debug\net8.0\ConsoleApp1.pdb
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.GeneratedMSBuildEditorConfig.editorconfig
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.AssemblyInfoInputs.cache
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.AssemblyInfo.cs
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.csproj.CoreCompileInputs.cache
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.sourcelink.json
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.dll
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\refint\ConsoleApp1.dll
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.pdb
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ConsoleApp1.genruntimeconfig.cache
+D:\HERRAMIENTAS_GIS\NET\ConsoleApp1\obj\Debug\net8.0\ref\ConsoleApp1.dll
