@@ -4,11 +4,11 @@ import arcpy, os, datetime, re
 arcpy.env.overwriteOutput = True
 
 # =================== CONFIG ===================
-DATOS_CSV      = r"D:\XLS_Temporal\DatosK$.csv"
-DICT_CSV       = r"D:\XLS_Temporal\DiccionarioK$.csv"
-WORK_GDB       = r"D:\XLS_Temporal\250421_GDB_ICA17_ODL_LAM2965.gdb"
+DATOS_CSV      = r"D:\XLS_Temporal\Anexo_4_TablasGdb\PuntoMuestreoFlora.csv"
+DICT_CSV       = r"D:\XLS_Temporal\Anexo_4_TablasGdb\Diccionario_PMF.csv"
+WORK_GDB       = r"D:\XLS_Temporal\PruebasTBLoad.gdb"
 OUT_GDB        = r"D:\XLS_Temporal\GDB_ANLA_sandbox.gdb"
-OUT_TABLE_NAME = "Seg_EspSembradaTB_CLEAN_K"
+OUT_TABLE_NAME = "PuntoMuestreoFlora_PruebaGlobo"  # sin extensión
 LOG_PATH       = r"D:\XLS_Temporal\work\logs\clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
 # ==============================================
 
