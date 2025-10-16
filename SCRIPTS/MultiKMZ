@@ -1,0 +1,229 @@
+# -*- coding: utf-8 -*-
+# ArcGIS Desktop 10.8 - Python 2.7
+# Une múltiples KMZ/KML en una GDB, proyectando a EPSG:3116
+
+import arcpy
+import os
+import sys
+import traceback
+import time
+
+# ---------------------------------------------------------------------
+# CONFIGURA AQUÍ TUS RUTAS
+# ---------------------------------------------------------------------
+INPUT_FOLDER = r"D:\XLS_Temporal\INFORME 2"            # Carpeta que contiene .kmz/.kml
+OUTPUT_GDB_PATH = r"D:\XLS_Temporal\KMZ_Merge.gdb" # GDB de salida (se crea si no existe)
+OUT_WKID = 3116                                      # MAGNA-SIRGAS / Colombia (EPSG:3116)
+FIELD_SRC = "source_kmz"                             # Campo para nombre de archivo
+# ---------------------------------------------------------------------
+
+arcpy.env.overwriteOutput = True
+
+def log(msg):
+    ts = time.strftime("%H:%M:%S")
+    print("[{0}] {1}".format(ts, msg))
+
+def safe_make_gdb(gdb_path):
+    out_dir = os.path.dirname(gdb_path)
+    gdb_name = os.path.basename(gdb_path)
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+    if not arcpy.Exists(gdb_path):
+        arcpy.CreateFileGDB_management(out_dir, gdb_name)
+        log("Creada GDB: {0}".format(gdb_path))
+    else:
+        log("Usando GDB existente: {0}".format(gdb_path))
+
+def list_kmz_kml(folder):
+    files = []
+    for name in os.listdir(folder):
+        lower = name.lower()
+        if lower.endswith(".kmz") or lower.endswith(".kml"):
+            files.append(os.path.join(folder, name))
+    return files
+
+def ensure_field(fc, field_name, ftype="TEXT", length=255):
+    existing = [f.name for f in arcpy.ListFields(fc)]
+    if field_name not in existing:
+        arcpy.AddField_management(fc, field_name, ftype, field_length=length)
+
+def calc_field_text(fc, field_name, text_value):
+    expr = "'{0}'".format(text_value.replace("'", ""))
+    arcpy.CalculateField_management(fc, field_name, expr, "PYTHON_9.3")
+
+def pick_transformation(in_sr, out_sr):
+    # Intenta escoger una transformación adecuada si existe (evita errores por versiones)
+    try:
+        cands = arcpy.ListTransformations(in_sr, out_sr)
+        if cands and len(cands) > 0:
+            # Prefiere alguna que haga referencia a MAGNA/Colombia si está disponible
+            first_pref = None
+            for t in cands:
+                up = t.upper()
+                if "MAGNA" in up or "COLOMB" in up:
+                    first_pref = t
+                    break
+            if first_pref:
+                return first_pref
+            return cands[0]
+    except:
+        pass
+    return ""
+
+def ensure_target_fc(output_gdb, geom_type, template_fc, out_sr):
+    name_map = {
+        "Point": "kmz_merged_points",
+        "Polyline": "kmz_merged_lines",
+        "Polygon": "kmz_merged_polygons",
+        "Multipatch": "kmz_merged_multipatches",
+        "Multipoint": "kmz_merged_multipoints"
+    }
+    out_name = name_map.get(geom_type, "kmz_merged_{0}".format(geom_type.lower()))
+    out_fc = os.path.join(output_gdb, out_name)
+    if not arcpy.Exists(out_fc):
+        arcpy.CreateFeatureclass_management(
+            output_gdb, out_name, geom_type,
+            template_fc, "DISABLED", "DISABLED", out_sr
+        )
+        log("Creado destino: {0}".format(out_fc))
+    return out_fc
+
+def project_to_sr(in_fc, out_fc, out_sr, in_sr=None):
+    if in_sr is None:
+        in_sr = arcpy.Describe(in_fc).spatialReference
+    trans = pick_transformation(in_sr, out_sr)
+    arcpy.Project_management(in_fc, out_fc, out_sr, trans)
+
+def kml_to_layer(in_kmz, out_folder, layer_name):
+    # KML To Layer (herramienta de Conversion Tools)
+    # out_folder debe ser una carpeta (no una GDB)
+    arcpy.KMLToLayer_conversion(in_kmz, out_folder, layer_name)
+    # La herramienta crea: <out_folder>\<layer_name>.gdb y <layer_name>.lyr
+    gdb_created = os.path.join(out_folder, layer_name + ".gdb")
+    placemarks_ds = os.path.join(gdb_created, "Placemarks")
+    return gdb_created, placemarks_ds
+
+def walk_fc_in_dataset(feature_dataset_path):
+    # Lista las feature classes dentro del dataset "Placemarks"
+    fcs = []
+    if arcpy.Exists(feature_dataset_path):
+        old_ws = arcpy.env.workspace
+        arcpy.env.workspace = feature_dataset_path
+        for fc in arcpy.ListFeatureClasses():
+            fcs.append(os.path.join(feature_dataset_path, fc))
+        arcpy.env.workspace = old_ws
+    return fcs
+
+def main():
+    try:
+        # Validaciones
+        if not os.path.isdir(INPUT_FOLDER):
+            raise Exception("La carpeta de entrada no existe: {0}".format(INPUT_FOLDER))
+        safe_make_gdb(OUTPUT_GDB_PATH)
+
+        out_sr = arcpy.SpatialReference(OUT_WKID)
+
+        # Carpeta temporal para salidas de KMLToLayer
+        scratch_root = arcpy.env.scratchFolder if arcpy.env.scratchFolder else os.environ.get("TEMP", INPUT_FOLDER)
+        tmp_folder = os.path.join(scratch_root, "kml2layer_tmp")
+        if not os.path.isdir(tmp_folder):
+            os.makedirs(tmp_folder)
+
+        files = list_kmz_kml(INPUT_FOLDER)
+        if not files:
+            log("No se encontraron .kmz/.kml en: {0}".format(INPUT_FOLDER))
+            return
+
+        log("Archivos encontrados: {0}".format(len(files)))
+
+        counts = {"Point":0, "Polyline":0, "Polygon":0}
+        created_targets = {}
+
+        for in_path in files:
+            base = os.path.splitext(os.path.basename(in_path))[0]
+            log("Procesando: {0}".format(in_path))
+
+            try:
+                # 1) Convertir KML/KMZ a GDB temporal
+                layer_name = "kml_{0}".format(base)
+                gdb_created, placemarks_ds = kml_to_layer(in_path, tmp_folder, layer_name)
+
+                # 2) Recorrer las FC creadas (Points, Polylines, Polygons)
+                fcs = walk_fc_in_dataset(placemarks_ds)
+                if not fcs:
+                    log("  * Sin 'Placemarks' o sin entidades.")
+                    continue
+
+                for src_fc in fcs:
+                    desc = arcpy.Describe(src_fc)
+                    geom_type = desc.shapeType  # 'Point', 'Polyline', 'Polygon', etc.
+
+                    if geom_type not in ("Point", "Polyline", "Polygon"):
+                        # Ignora otros tipos si no te interesan
+                        continue
+
+                    # Añadir campo de fuente y calcular
+                    ensure_field(src_fc, FIELD_SRC, "TEXT", 255)
+                    calc_field_text(src_fc, FIELD_SRC, base)
+
+                    # 3) Proyectar a 3116 en memoria
+                    proj_fc = r"in_memory\_{0}_{1}".format(geom_type.lower(), base)
+                    if arcpy.Exists(proj_fc):
+                        arcpy.Delete_management(proj_fc)
+                    project_to_sr(src_fc, proj_fc, out_sr, desc.spatialReference)
+
+                    # 4) Crear destino (si no existe) usando el primer template
+                    if geom_type not in created_targets:
+                        target_fc = ensure_target_fc(OUTPUT_GDB_PATH, geom_type, proj_fc, out_sr)
+                        created_targets[geom_type] = target_fc
+                    else:
+                        target_fc = created_targets[geom_type]
+
+                    # 5) Append
+                    arcpy.Append_management(proj_fc, target_fc, "NO_TEST")
+                    # 6) Contar agregados
+                    try:
+                        c = int(arcpy.GetCount_management(proj_fc).getOutput(0))
+                        counts[geom_type] += c
+                    except:
+                        pass
+
+                    # Limpieza in_memory
+                    try:
+                        arcpy.Delete_management(proj_fc)
+                    except:
+                        pass
+
+                # (Opcional) borrar la GDB temporal por archivo para ahorrar espacio
+                try:
+                    arcpy.Delete_management(os.path.join(tmp_folder, layer_name + ".gdb"))
+                    arcpy.Delete_management(os.path.join(tmp_folder, layer_name + ".lyr"))
+                except:
+                    pass
+
+            except Exception as e:
+                log("  ! Error con {0}: {1}".format(in_path, e))
+                tb = traceback.format_exc()
+                log(tb)
+                continue
+
+        # Resumen
+        log("--------------------------------------------------")
+        log("Salida: {0}".format(OUTPUT_GDB_PATH))
+        for gt in ("Point", "Polyline", "Polygon"):
+            if gt in created_targets:
+                out_fc = created_targets[gt]
+                try:
+                    total = int(arcpy.GetCount_management(out_fc).getOutput(0))
+                except:
+                    total = counts.get(gt, 0)
+                log("  {0}: {1} entidades -> {2}".format(gt, total, out_fc))
+        log("Hecho.")
+
+    except Exception as e:
+        log("Fallo general: {0}".format(e))
+        tb = traceback.format_exc()
+        log(tb)
+
+if __name__ == "__main__":
+    main()
