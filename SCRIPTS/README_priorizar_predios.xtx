@@ -1,0 +1,103 @@
+-------
+Calcula un indice de priorizacion por predio combinando criterios (beneficio/costo) mediante Weighted Linear Combination:
+- Intersecta predios con cada criterio, repara geometria, convierte a singlepart y disuelve por predio.
+- Normaliza cada criterio (segun Metodo) y calcula los componentes ponderados.
+- Suma beneficios, resta costos y produce 'Indice_Neto' y un ranking 'Rank_WLC'.
+- **Todas las operaciones espaciales se normalizan a EPSG:3116** y la salida se mantiene en 3116 para evitar conflictos con CTM12.
+
+Pre-condiciones y supuestos
+---------------------------
+1) Version: ArcGIS Desktop 10.8, Python 2.7.
+2) SR: el script reproyecta internamente a EPSG:3116. Cada capa debe tener SR definido (no Unknown/Undefined).
+   - Si una entrada no tiene SR: el proceso se detiene con mensaje para que defina la proyeccion.
+3) Entradas minimas:
+   - GDB principal.
+   - FDS de criterios (cada FC debe tener campo 'Valor' numerico obligatorio).
+   - FDS de predios.
+   - FC de predios (en el FDS de predios).
+   - Campo ID de predio (clave unica por predio).
+   - Tabla 'tbl_config' creada previamente (puede salir de la herramienta anterior).
+   - FDS de salida y nombre de la FC de salida.
+4) `tbl_config` debe contener, al menos: Criterio (o Criterio_norm/FC/Nombre), Peso, Metodo. Opcionales: Polarity, Vmin, Vmax. 'ConstVal' es opcional.
+   - Los pesos se normalizan automaticamente (suman 1) considerando solo filas con Peso > 0.
+   - Si faltan Vmin/Vmax, se infieren segun el Metodo y los datos del criterio.
+
+Metodo de calculo 
+---------------------------
+- Para cada criterio:
+  1) Copia a memoria y crea/llena 'VALOR_CRIT' (double) a partir del campo 'Valor'.
+  2) Intersecta predios x criterio, repara geometria, multiparte->singlepart.
+  3) Normaliza por segmento segun Metodo:
+     - 'binario': 1 si Valor > 0; 0 en otro caso.
+     - 'max': Valor / Vmax.
+     - 'minmax': (Valor - Vmin) / (Vmax - Vmin).
+     - 'const': usa ConstVal si existe.
+     (Se trunca a [0,1]).
+  4) Disuelve por predio, calcula:
+     - Pct_<criterio>: porcentaje de cobertura del criterio en el predio (area_intersect / area_predio), acotado a [0,1].
+     - Score_<criterio>: promedio area-ponderado de la normalizacion, acotado a [0,Pct].
+  5) Calcula Comp_<criterio> = Score * Peso * signo, donde signo = -1 si Polarity='cost', +1 si 'benefit'.
+- Totales:
+  - Benef_Total = suma de componentes positivos (beneficios).
+  - Cost_Total  = suma del valor absoluto de componentes negativos (costos).
+  - Indice_Neto = Benef_Total - Cost_Total.
+- Ranking:
+  - Rank_WLC: orden descendente por Indice_Neto (1 = mayor prioridad).
+
+Campos creados en la salida
+---------------------------
+- Area_ha (double) en predios reproyectados (auxiliar).
+- Por criterio (si aplica en cfg): Score_*, Pct_*, Peso_*, Vmin_*, Vmax_*, Comp_*, Metodo_*, Polarity_*.
+- Totales: Benef_Total, Cost_Total, Indice_Neto (double).
+- Rank_WLC (long).
+
+Uso (paso a paso)
+-----------------
+1) Asegure insumos:
+   - FDS de criterios: cada FC con campo numerico 'Valor' (obligatorio).
+   - FDS de predios y FC de predios con un campo ID unico sin duplicados.
+   - Tabla tbl_config (ver README de generacion). Ajuste manualmente Polarity y Peso.
+
+2) Abra la herramienta "Calcular Indice WLC (beneficio suma, costo resta)".
+
+3) Parametros:
+   - Geodatabase (GDB): GDB principal.
+   - Feature Dataset de Criterios: FDS con las FC de criterios de entrada.
+   - Feature Dataset de Predios: FDS de insumo de predios.
+   - Feature Class de Predios: la capa de predios.
+   - Campo ID de Predio: el campo clave (texto o numerico) que identifica univocamente.
+   - Campo 'Valor' en criterios: nombre del campo que contiene los valores (por defecto 'Valor').
+   - Tabla de configuracion (tbl_config): tabla con Criterio/Peso/Metodo/(Polarity/Vmin/Vmax).
+   - SR de salida: opcional; por defecto el script fuerza 3116 internamente. Mantener 3116 es recomendado.
+   - Feature Dataset de Salida: FDS donde se escribira la salida.
+   - Nombre FC de salida: por defecto 'Predios_Prioridad'.
+
+4) Ejecute.
+   - El script creara un FDS temporal '_TMP_SR' en 3116 y reproyectara predios y criterios a 3116.
+   - Procesara solo los criterios cuyos nombres (normalizados) coincidan con filas de tbl_config con Peso>0.
+   - Generara la salida en el FDS de salida en 3116 con los campos descritos.
+
+5) Revise resultados y, si es necesario, publique o consuma en otros procesos.
+
+Precauciones y errores comunes
+------------------------------
+- SR indefinido: si alguna capa entra con SR Unknown/Undefined, el proceso se detiene. Use 'Define Projection' con el SR correcto y reintente.
+- CTM12 personalizados: se aceptan siempre que el SR este definido (aunque su factoryCode sea 0). El script reproyecta a 3116 para unificar.
+- Falta de campo 'Valor' en alguna FC de criterios: se omite con advertencia. Agregue el campo y reejecute.
+- Inconsistencias en tbl_config:
+  - Si faltan Polarity/Vmin/Vmax/ConstVal, se aplican valores por defecto/inferencia.
+  - Si una fila tiene Peso=0, ese criterio se omite (no participa en el indice).
+- Colisiones de nombre en campos de salida: se usa arcpy.ValidateFieldName para crear nombres validos. Revise longitudes y caracteres.
+
+Buenas practicas
+----------------
+- Mantenga la nomenclatura de FC consistente con los nombres usados en tbl_config (la normalizacion elimina tildes, espacios y sufijos comunes como _WGS84, _SR, etc.).
+- Trabaje siempre con geometrias validas; aunque el script intenta reparar, es mejor corregir en origen si hay problemas.
+- Si necesita trazabilidad, conserve la 'tbl_config' usada junto con la salida.
+- Documente externamente el esquema de pesos y polaridades, especialmente si cambia por version.
+
+Salida
+------
+- FC de salida: <FDS_SALIDA>\<Nombre FC>, en EPSG:3116.
+- Atributos: ver seccion "Campos creados en la salida".
+- Mensajes: listado de criterios incluidos/omitidos y resumen final.

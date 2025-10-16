@@ -1,0 +1,79 @@
+README - Generar tabla de configuracion (tbl_config) desde FDS
+Compatibilidad: ArcGIS Desktop 10.8 (Python 2.7, arcpy).
+
+Resumen
+-------
+Esta herramienta recorre todas las Feature Class (FC) dentro de un Feature Dataset (FDS) de criterios, verifica que cada FC tenga un campo numerico llamado 'Valor' y genera/actualiza una tabla 'tbl_config' en una Geodatabase (GDB) de salida. Define automaticamente el metodo por umbral (binario o minmax) y guarda Vmin/Vmax observados. El campo 'Fuente' almacena el nombre de la GDB de entrada.
+
+Pre-condiciones y supuestos
+---------------------------
+1) Version: ArcGIS Desktop 10.8, Python 2.7.
+2) Entrada: un FDS con las FC de criterios. Cada FC debe tener un campo numerico exacto con nombre 'Valor' (obligatorio). Tipos aceptados: Double, Single, Integer, SmallInteger.
+3) Las FC sin 'Valor' numerico se omiten con advertencia.
+4) No se usan archivos CSV. La tabla se crea directamente dentro de una GDB.
+5) El SR de las capas no es relevante para esta herramienta (no reproyecta). Solo se listan valores del campo 'Valor'.
+6) Las columnas creadas en tbl_config: 
+   - Criterio (nombre legible de la FC)
+   - Criterio_norm (nombre normalizado sin tildes ni sufijos)
+   - Metodo (binario|minmax|max)  [esta herramienta solo infiere binario o minmax]
+   - Polarity (benefit|cost)       [por defecto 'benefit' para todas; edite manualmente si aplica]
+   - Vmin, Vmax (double)
+   - Peso (double)                 [por defecto 1.0; edite manualmente si aplica]
+   - N (conteo de valores validos)
+   - FechaCalc (timestamp)
+   - Fuente (nombre de la GDB de entrada)
+
+Logica de inferencia del Metodo
+-------------------------------
+- Se leen los valores del campo 'Valor' por FC y se calculan n, vmin, vmax.
+- Si no hay valores validos (n=0): Metodo='minmax', Vmin=0, Vmax=1.
+- Si vmax <= 1.0: Metodo='binario' (Vmin=0, Vmax=1).
+- Si vmin == vmax: Metodo='minmax' (Vmin=0, Vmax=1).
+- En otro caso: Metodo='minmax' con Vmin y Vmax observados.
+
+Que NO hace
+-----------
+- No calcula pesos finales (deja Peso=1.0 por defecto; usted puede editar).
+- No determina 'Polarity' automaticamente (deja 'benefit').
+- No reproyecta ni modifica geometria.
+
+Pasos de uso (paso a paso)
+--------------------------
+1) Prepare la GDB de entrada y ubique el FDS con las FC de criterios.
+   - Cada FC debe tener un campo 'Valor' numerico. Si falta, agreguelo antes.
+
+2) En ArcMap 10.8, abra la caja de herramientas que contiene:
+   "Generar tabla de configuracion (auto desde FDS)" -> herramienta "Crear/llenar tbl_config leyendo 'Valor' de cada FC".
+
+3) Rellene los parametros:
+   - GDB de entrada (contiene el FDS): seleccione la GDB de origen.
+   - Feature Dataset de criterios (entrada): seleccione el FDS.
+   - GDB de salida (crear tabla aqui): seleccione la GDB donde quedara 'tbl_config'.
+   - Nombre de la tabla: deje por defecto 'tbl_config' o cambie si lo desea.
+
+4) Ejecute la herramienta.
+   - Se creara (o recreara) la tabla en la GDB de salida.
+   - Se listaran mensajes "OK <FC> -> metodo=..." por cada FC con 'Valor'.
+   - FC sin 'Valor' numerico se reportan como omitidas.
+
+5) Revise/edite manualmente en la 'tbl_config':
+   - Polarity (benefit|cost) segun el modelo.
+   - Peso (double) segun su esquema de ponderacion. La herramienta de priorizacion normaliza los pesos.
+
+Salidas
+-------
+- Tabla: <OUT_GDB>\tbl_config (o el nombre especificado).
+- Contenido: una fila por FC con las columnas descritas.
+
+Mensajes y advertencias tipicas
+-------------------------------
+- "FC no encontrada: <nombre> (omitida)" -> la FC no esta en el FDS.
+- "La FC '<nombre>' no tiene campo 'Valor' numerico. Se omite." -> agregue un campo 'Valor' numerico y reejecute.
+- "No se encontraron Feature Class en el FDS." -> valide la ruta del FDS.
+
+Buenas practicas
+----------------
+- Mantenga nombres de FC y campo 'Valor' sin tildes ni caracteres especiales.
+- Revise coherencia de dominios del campo 'Valor' (especialmente si es binario).
+- Documente Polarity y Peso fuera de este proceso y traslade esos valores a la tabla.
+
