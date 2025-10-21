@@ -1,0 +1,148 @@
+
+Este documento describe **requisitos**, **configuración** y un **paso a paso** para ejecutar el script Python que
+convierte hojas de Excel (Datos$ / Diccionario$) en una **tabla en FileGDB** con tipos y longitudes alineados al
+diccionario ANLA.
+
+1) RESUMEN
+----------
+- Fuente: archivo Excel (.xlsx) con dos hojas: **Datos$** (registros) y **Diccionario$** (CAMPO, TIPO_DE_DATO, TAMAÑO).
+- Proceso:
+  a) Importa ambas hojas a una GDB de trabajo.
+  b) Construye el esquema desde Diccionario$ (o infiere TEXT(255) si no existe).
+  c) Crea tabla final en la GDB destino con tipos ANLA.
+  d) Convierte y copia valores (texto, enteros, reales con escala, fechas).
+  e) Registra un log de ejecución.
+- Salida: tabla **OUT_GDB\OUT_TABLE_NAME** + archivo de **log**.
+
+2) REQUISITOS
+-------------
+- **Software**: ArcGIS Desktop 10.x (ArcMap) o ArcGIS Pro con arcpy.
+- **Acceso** a rutas configuradas (lectura Excel, escritura en GDBs y carpeta de logs).
+- **Excel** en formato .xls (evitar que esté abierto durante la ejecución).
+- **Permisos** para crear/editar geodatabases (FileGDB).
+
+3) ENTRADAS Y SALIDAS
+---------------------
+ENTRADAS (variables en la sección CONFIG del script):
+- EXCEL_PATH     : Ruta completa del Excel fuente (.xlsx).
+- SHEET_DATOS    : Nombre de la hoja de datos (en ArcGIS debe terminar en '$', p. ej. "Datos$").
+- SHEET_DICT     : Nombre de la hoja de diccionario (con '$', p. ej. "Diccionario$").
+- WORK_GDB       : Geodatabase de trabajo temporal. Si no existe, el script la crea.
+- OUT_GDB        : Geodatabase destino donde quedará la tabla final.
+- OUT_TABLE_NAME : Nombre de la tabla de salida (solo nombre, sin ruta).
+- LOG_PATH       : Ruta del archivo de log (se crea si no existe).
+
+SALIDAS:
+- Tabla final: OUT_GDB\OUT_TABLE_NAME
+- Log de ejecución: LOG_PATH
+
+4) ESTRUCTURA ESPERADA DEL DICCIONARIO$
+---------------------------------------
+La hoja **Diccionario$** debe contener estas columnas (con esos nombres):
+- CAMPO
+- TIPO_DE_DATO   (valores válidos: single, double, smallinteger, longinteger, string, date)
+- TAMAÑO         (obligatorio para string; si se omite, se usa 255)
+
+Ejemplo mínimo:
+CAMPO, TIPO_DE_DATO, TAMAÑO
+CODIGO, string, 50
+DEN_SIEMB, double,
+MANT_PER, smallinteger,
+FECHA_REG, date,
+
+5) MAPA DE TIPOS (ANLA → ArcGIS)
+---------------------------------
+- single       → FLOAT    (precisión 7, escala 6)
+- double       → DOUBLE   (precisión 15, escala 8)
+- smallinteger → SHORT
+- longinteger  → LONG
+- string       → TEXT     (longitud desde TAMAÑO; default 255)
+- date         → DATE
+
+Notas:
+- Para FLOAT/DOUBLE se usa 'scale' como número de decimales de redondeo.
+- Fechas aceptan formatos comunes (YYYY-mm-dd, dd/mm/YYYY, etc.). Si no matchea, queda nulo.
+
+6) PASO A PASO DE CONFIGURACIÓN
+-------------------------------
+1. Copia el script .py a tu disco (por ejemplo: D:\XLS_Temporal\anla_xls_to_gdb.py).
+2. Abre el script y localiza la sección **CONFIG**.
+3. Ajusta:
+   - EXCEL_PATH con la ruta a tu Excel .xlsx.
+   - SHEET_DATOS = "Datos$" (con '$').
+   - SHEET_DICT  = "Diccionario$" (con '$').
+   - WORK_GDB: GDB temporal (puede ser una nueva ruta; el script la creará).
+   - OUT_GDB: GDB destino (si no existe, se creará).
+   - OUT_TABLE_NAME: nombre de la tabla que se generará en OUT_GDB.
+   - LOG_PATH: ruta del archivo de log (carpeta debe ser alcanzable).
+4. Verifica que el Excel tenga las hojas con **esos nombres exactos** y que Diccionario$ incluya las columnas requeridas.
+5. (Opcional) Si no usarás diccionario, deja SHEET_DICT pero el script tolera el fallo e inferirá TEXT(255).
+
+7) CÓMO EJECUTAR
+----------------
+A) ArcMap (ArcGIS Desktop 10.x):
+   - Abre ArcMap.
+   - Python Window → pega el script completo → Enter.
+   - O bien, ejecuta el .py con Python de ArcGIS Desktop desde línea de comandos si tu entorno está configurado.
+
+B) ArcGIS Pro:
+   - Python Pane → pega el script completo → ejecuta.
+   - Si recibes errores de 'basestring/unicode', aplica el bloque de compatibilidad Py3 (ver Sección 8).
+   - También puedes crear un Script Tool y parametrizar entradas.
+
+C) Script Tool (recomendado para operación repetible):
+   - Crea un Toolbox.
+   - Add → Script → apunta al .py.
+   - Define parámetros (Excel, GDBs, nombre de tabla, etc.).
+   - Ejecuta desde el Toolbox.
+
+8) COMPATIBILIDAD ARC GIS PRO (PYTHON 3)
+----------------------------------------
+Si corres en ArcGIS Pro (Python 3), añade tras los imports:
+    try:
+        basestring
+    except NameError:
+        basestring = str
+    try:
+        unicode
+    except NameError:
+        unicode = str
+
+Y en la función log(), usa apertura con encoding (io.open):
+    import io
+    with io.open(LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(u"{}\n".format(msg))
+
+9) BUENAS PRÁCTICAS
+-------------------
+- Asegura que los nombres de columnas en Datos$ **coincidan exactamente** con los de CAMPO en Diccionario$.
+- En string, define TAMAÑO realista (si no, 255).
+- Evita acentos o espacios finales en nombres de campo.
+- No abras el Excel mientras corre el script.
+- Dominios ANLA: este script **no** los aplica; sólo estructura/tipos. Aplica dominios después en la GDB si lo requieres.
+
+10) ERRORES COMUNES
+-------------------
+- "Tipo no soportado en diccionario: ...":
+  Revisa TIPO_DE_DATO (valores válidos: single, double, smallinteger, longinteger, string, date).
+- "La hoja 'Diccionario$' no se pudo leer":
+  Verifica el nombre exacto (con '$') y las columnas CAMPO, TIPO_DE_DATO, TAMAÑO.
+- "Cannot get exclusive schema lock":
+  Cierra vistas/tablas abiertas sobre la GDB destino.
+- "Object already exists":
+  El script borra la tabla si existe. Si no quieres ese comportamiento, comenta esa línea.
+- Fallas de ruta/permisos:
+  Verifica que las rutas configuradas existan o se puedan crear (WORK_GDB, OUT_GDB, carpeta de logs).
+
+11) VALIDACIÓN POST-CARGA (SUGERENCIAS)
+---------------------------------------
+- Agrega dominios y subtipos si aplica ANLA.
+- Crea índices sobre campos clave (por ejemplo, códigos/identificadores).
+- Compara recuento de filas entre Datos$ y tabla final.
+- Muestrea tipos de datos para confirmar conversiones (enteros, decimales, fechas).
+
+12) SOPORTE Y MANTENIMIENTO
+---------------------------
+- Revisa el archivo de log tras cada ejecución.
+- Versiona el script junto con un Excel de ejemplo y este LEEME.
+- Si migras completamente a ArcGIS Pro, conserva el bloque de compatibilidad Py3.
