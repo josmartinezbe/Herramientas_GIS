@@ -1,0 +1,254 @@
+# -*- coding: utf-8 -*-
+# ArcGIS Desktop 10.x / ArcGIS Pro (arcpy)
+import arcpy, os, datetime, re, io
+arcpy.env.overwriteOutput = True
+
+# ---- Compatibilidad Py3 (ArcGIS Pro) ----
+try:
+    basestring
+except NameError:
+    basestring = str
+try:
+    unicode
+except NameError:
+    unicode = str
+# -----------------------------------------
+
+
+# =================== CONFIG ===================
+EXCEL_PATH     = "G:/Unidades compartidas/TERRASOS_SIG/MODELOS/ESTANDARES/TB ANLA/PuntoMuestreoFlora2.xlsx"
+SHEET_DATOS    = "Datos$"        # hoja con datos (con '$')
+SHEET_DICT     = "Diccionario$"  # hoja con diccionario (con '$')
+WORK_GDB       = "D:/XLS_Temporal/PruebasTBLoad.gdb"
+OUT_GDB        = "D:/XLS_Temporal/GDB_ANLA_sandbox.gdb"
+OUT_TABLE_NAME = "Seg_Indicadores_arcpro2"  # sin extensión
+LOG_PATH       = "D:/XLS_Temporal/work/logs/clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
+# ==============================================
+
+
+# ---- logging ----
+def log(msg):
+    arcpy.AddMessage(msg)
+    try:
+        d = os.path.dirname(LOG_PATH)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(u"{}\n".format(msg))
+    except:
+        pass
+
+def ensure_gdb(gdb):
+    if not arcpy.Exists(gdb):
+        folder, name = os.path.split(gdb)
+        if folder and not os.path.isdir(folder):
+            os.makedirs(folder)
+        arcpy.CreateFileGDB_management(folder, name)
+
+# ---- XLSX -> tabla GDB ----
+def excel_to_table(xls_path, sheet_name, out_gdb, out_name):
+    if not os.path.isfile(xls_path):
+        raise RuntimeError(u"No existe el Excel: {}".format(xls_path))
+    out_tab = os.path.join(out_gdb, out_name)
+    if arcpy.Exists(out_tab):
+        arcpy.Delete_management(out_tab)
+    # Nota: para Excel, la hoja DEBE llevar '$'
+    arcpy.ExcelToTable_conversion(xls_path, out_tab, sheet_name)
+    return out_tab
+
+# ---- normalizadores de encabezados del diccionario ----
+def norm(s):
+    return re.sub(u"[ _\-\.]", "", (s or "").strip().lower()).replace(u"ñ", u"n")
+
+# candidatos flexibles para columnas del diccionario
+DICT_COL_CANDIDATES = {
+    "campo":   {"campo", "field", "nombrecampo", "columna"},
+    "tipo":    {"tipodedato", "tipo", "type", "datatipo"},
+    "tamano":  {"tamano", "tamaño", "longitud", "length", "size"},
+    "dominio": {"dominio", "domain"}  # opcional
+}
+
+def find_dict_columns(table_path):
+    names = [f.name for f in arcpy.ListFields(table_path) if f.type != "OID"]
+    normed = {norm(n): n for n in names}
+    pick = {}
+    for key, candidates in DICT_COL_CANDIDATES.items():
+        for c in candidates:
+            if c in normed:
+                pick[key] = normed[c]
+                break
+    if "campo" not in pick or "tipo" not in pick:
+        raise RuntimeError(u"Diccionario sin encabezados reconocibles. Debe tener al menos 'CAMPO' y 'TIPO DE DATO'. "
+                           u"Encontradas: {}".format(", ".join(names)))
+    return pick
+
+# ---- alias de tipos -> ArcGIS ----
+TYPE_ALIASES = {
+    "single": ("FLOAT", 7, 6),
+    "float":  ("FLOAT", 7, 6),
+    "double": ("DOUBLE", 15, 8),
+    "smallinteger": ("SHORT", None, None),
+    "short": ("SHORT", None, None),
+    "longinteger": ("LONG", None, None),
+    "long": ("LONG", None, None),
+    "int": ("LONG", None, None),
+    "integer": ("LONG", None, None),
+    "string": ("TEXT", None, None),
+    "text": ("TEXT", None, None),
+    "date": ("DATE", None, None)
+}
+
+def resolve_type(t_raw):
+    t = norm(t_raw)
+    if t not in TYPE_ALIASES:
+        raise ValueError(u"Tipo no soportado en diccionario: '{}'".format(t_raw))
+    return TYPE_ALIASES[t]
+
+# ---- lee el diccionario y arma el esquema destino ----
+def read_schema_from_dict(dict_table):
+    cols = find_dict_columns(dict_table)
+    col_campo = cols["campo"]; col_tipo = cols["tipo"]; col_tam = cols.get("tamano")
+    schema = {}
+    fields = [col_campo, col_tipo] + ([col_tam] if col_tam else [])
+    with arcpy.da.SearchCursor(dict_table, fields) as cur:
+        for row in cur:
+            campo = row[0]
+            tipo_raw = row[1]
+            if not campo or not tipo_raw:
+                continue
+            gis_type, prec_def, scale_def = resolve_type(tipo_raw)
+            length = None
+            if gis_type == "TEXT":
+                if col_tam:
+                    tval = row[2]
+                    length = int(tval) if tval not in (None, "", " ") else 255
+                else:
+                    length = 255
+            schema[campo] = {"type": gis_type, "precision": prec_def, "scale": scale_def, "length": length}
+    if not schema:
+        raise RuntimeError("Diccionario vacío.")
+    return schema
+
+# ---- crea tabla de salida respetando el orden de Datos ----
+def create_table_in_order(out_gdb, out_name, ordered_fields, schema):
+    out = os.path.join(out_gdb, out_name)
+    if arcpy.Exists(out):
+        arcpy.Delete_management(out)
+    arcpy.CreateTable_management(out_gdb, out_name)
+    for fld in ordered_fields:
+        spec = schema[fld]; t = spec["type"]
+        if t == "TEXT":
+            arcpy.AddField_management(out, fld, "TEXT", field_length=spec.get("length",255))
+        elif t in ("FLOAT","DOUBLE"):
+            arcpy.AddField_management(out, fld, t,
+                                      field_precision=spec.get("precision"),
+                                      field_scale=spec.get("scale"))
+        elif t in ("SHORT","LONG"):
+            arcpy.AddField_management(out, fld, t)
+        elif t == "DATE":
+            arcpy.AddField_management(out, fld, "DATE")
+        else:
+            raise ValueError("Tipo no soportado: {}".format(t))
+    return out
+
+# ---- conversiones de valores ----
+def to_float(v):
+    try:
+        if v is None: return None
+        if isinstance(v, basestring): v = v.replace(',', '.')
+        return float(v)
+    except: return None
+
+def to_int(v):
+    try:
+        if v is None: return None
+        if isinstance(v, basestring): v = v.replace(',', '.')
+        return int(round(float(v)))
+    except: return None
+
+def to_text(v, n):
+    if v is None: return None
+    try: s = unicode(v)
+    except: s = str(v)
+    return s[:n]
+
+def to_date(v):
+    import datetime
+    if v in (None, ''): return None
+    if isinstance(v, datetime.datetime): return v
+    fmts = ["%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%Y/%m/%d","%d/%m/%Y %H:%M:%S"]
+    for f in fmts:
+        try: return datetime.datetime.strptime(v, f)
+        except: pass
+    return None
+
+def round_to(v, n):
+    try:
+        if v is None: return None
+        return round(float(v), n)
+    except: return None
+
+def build_row_converter(in_fields, ordered_out, schema):
+    idx = {f: i for i, f in enumerate(in_fields)}
+    funcs = []
+    for f in ordered_out:
+        spec = schema[f]; t = spec["type"]
+        if f not in idx:
+            funcs.append(lambda row: None)  # no viene en Datos (columna faltante)
+            continue
+        i = idx[f]
+        if t == "TEXT":
+            L = spec.get("length", 255)
+            funcs.append(lambda row, ii=i, LL=L: to_text(row[ii], LL))
+        elif t in ("FLOAT","DOUBLE"):
+            dec = spec.get("scale", 6)
+            funcs.append(lambda row, ii=i, dd=dec: round_to(to_float(row[ii]), dd if dd is not None else 6))
+        elif t in ("SHORT","LONG"):
+            funcs.append(lambda row, ii=i: to_int(row[ii]))
+        elif t == "DATE":
+            funcs.append(lambda row, ii=i: to_date(row[ii]))
+        else:
+            funcs.append(lambda row, ii=i: row[ii])
+    def convert(row): return tuple(fn(row) for fn in funcs)
+    return convert
+
+# ------------------- MAIN -------------------
+def main():
+    ensure_gdb(WORK_GDB); ensure_gdb(OUT_GDB)
+    log("=== XLSX → Tabla limpia (orden y tipos correctos) ===")
+    log("Excel: {}".format(EXCEL_PATH))
+    log("Hojas: Datos='{}'  Diccionario='{}'".format(SHEET_DATOS, SHEET_DICT))
+
+    # 1) XLSX → tablas temporales en WORK_GDB
+    t_datos = excel_to_table(EXCEL_PATH, SHEET_DATOS, WORK_GDB, "t_datos_xlsx")
+    t_dict  = excel_to_table(EXCEL_PATH, SHEET_DICT,  WORK_GDB, "t_dict_xlsx")
+
+    # 2) Esquema desde diccionario (OBLIGATORIO)
+    schema = read_schema_from_dict(t_dict)
+    log(u"Diccionario leído: {} campos".format(len(schema)))
+
+    # 3) Orden de salida = orden de encabezados en Datos (solo los que estén en el diccionario)
+    datos_fields = [f.name for f in arcpy.ListFields(t_datos) if f.type not in ("OID","Geometry")]
+    ordered_out  = [f for f in datos_fields if f in schema]
+    # Añadir al final los campos del diccionario que no vinieron en Datos
+    ordered_out += [f for f in schema.keys() if f not in ordered_out]
+
+    # 4) Crear tabla final con tipos correctos y orden respetado
+    out_tbl = create_table_in_order(OUT_GDB, OUT_TABLE_NAME, ordered_out, schema)
+
+    # 5) Insertar filas convirtiendo tipos
+    convert = build_row_converter(datos_fields, ordered_out, schema)
+    inserted = 0
+    with arcpy.da.SearchCursor(t_datos, datos_fields) as sc, \
+         arcpy.da.InsertCursor(out_tbl, ordered_out) as ic:
+        for row in sc:
+            ic.insertRow(convert(row))
+            inserted += 1
+
+    log(u"Salida: {} ({} filas insertadas)".format(out_tbl, inserted))
+    log(u"Orden de campos (salida): {}".format(", ".join(ordered_out)))
+    log(u"OK. Usa Append/Load desde esta tabla hacia tu tabla ANLA si aplica.")
+    log(u"Log: {}".format(LOG_PATH))
+
+if __name__ == "__main__":
+    main()
