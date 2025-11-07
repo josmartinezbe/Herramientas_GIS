@@ -3,12 +3,12 @@
 import arcpy, os, datetime
 
 # =============== CONFIG ===============
-EXCEL_PATH     = r"D:\XLS_Temporal\MuestreoFloraResultados_ODL_BHM.xlsx"
+EXCEL_PATH     = r"D:\XLS_Temporal\CENIT\Seg_Indicadores.xlsx"
 SHEET_DATOS    = "Datos$"         # hoja con tus datos
 SHEET_DICT     = "Diccionario$"   # hoja con el diccionario (CAMPO, TIPO_DE_DATO, TAMAÑO)
 WORK_GDB       = r"D:\XLS_Temporal\250421_GDB_ICA17_ODL_LAM2965.gdb"
 OUT_GDB        = r"D:\XLS_Temporal\GDB_ANLA_sandbox.gdb"
-OUT_TABLE_NAME = "Seg_EspSembradaTB_CLEAN"   # tabla nueva limpia
+OUT_TABLE_NAME = "Seg_Indicadores_cenit"   # tabla nueva limpia
 LOG_PATH       = r"D:\XLS_Temporal\logs\clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
 # =====================================
 

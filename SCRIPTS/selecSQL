@@ -1,0 +1,20 @@
+import arcpy
+
+layer = r"251105_pg_odl"   # tal como aparece en la TOC
+field = "ID"  # el campo a listar
+
+vals = []
+with arcpy.da.SearchCursor(layer, [field]) as cur:
+    for (v,) in cur:
+        if v is not None:
+            vals.append(unicode(v))  # ArcMap 10.x
+
+# únicos preservando orden
+vals = list(dict.fromkeys(vals))
+
+# comillas y escape de ' -> ''
+vals_fmt = [u"'{}'".format(v.replace(u"'", u"''")) for v in vals]
+sql_in = u"IN ({})".format(u",".join(vals_fmt))
+
+print(sql_in)           # Míralo en la consola y cópialo
+arcpy.AddMessage(sql_in)
