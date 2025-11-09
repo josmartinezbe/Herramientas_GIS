@@ -19,13 +19,14 @@ except NameError:
 
 # =================== CONFIG ===================
 # Rutas de entrada/salida y nombres clave.
-EXCEL_PATH     = "G:/Unidades compartidas/TERRASOS_SIG/MODELOS/ESTANDARES/TB ANLA/PuntoMuestreoFlora.xlsx"
+EXCEL_PATH     = "G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\MuestreoFloraResultados.xlsx"  # ruta al archivo Excel
 SHEET_DATOS    = "Datos$"        # nombre de hoja con los datos. OJO: debe terminar en '$'
 SHEET_DICT     = "Diccionario$"  # nombre de hoja con el diccionario (CAMPO, TIPO, TAMAÑO). También con '$'
-WORK_GDB       = "D:/XLS_Temporal/PruebasTBLoad.gdb"          # GDB temporal de trabajo
-OUT_GDB        = "D:/XLS_Temporal/GDB_ANLA_sandbox.gdb"       # GDB de salida final
-OUT_TABLE_NAME = "PuntoMuestreoFlora_arcpro_p1"                    # nombre de la tabla de salida (sin ruta)
-LOG_PATH       = "D:/XLS_Temporal/work/logs/clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
+WORK_GDB       = "G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\PruebasTBLoad.gdb"          # GDB temporal de trabajo
+OUT_GDB        = "G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\GDB_ANLA_sandbox.gdb"       # GDB de salida final
+OUT_TABLE_NAME = "MuestreoFloraResultados_load"                    # nombre de la tabla de salida (sin ruta)
+LOG_PATH = "G:/Unidades compartidas/TERRASOS_SIG/MODELOS/ESTANDARES/TB ANLA/work/logs/clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
+
 # ==============================================
 
 
