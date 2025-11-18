@@ -1,6 +1,6 @@
 
 Este documento describe **requisitos**, **configuración** y un **paso a paso** para ejecutar el script Python que
-convierte hojas de Excel (Datos$ / Diccionario$) en una **tabla en FileGDB** con tipos y longitudes alineados al
+convierte hojas de Excel (Datos$ / Diccionario$) en una **tabla en FileGDB** con tipos y longitudes de atributos alineados al
 diccionario ANLA.
 
 1) RESUMEN
@@ -18,7 +18,7 @@ diccionario ANLA.
 -------------
 - **Software**: ArcGIS Desktop 10.x (ArcMap) o ArcGIS Pro con arcpy.
 - **Acceso** a rutas configuradas (lectura Excel, escritura en GDBs y carpeta de logs).
-- **Excel** en formato .xls (evitar que esté abierto durante la ejecución).
+- **Excel** en formato .xlsx (evitar que esté abierto durante la ejecución).
 - **Permisos** para crear/editar geodatabases (FileGDB).
 
 3) ENTRADAS Y SALIDAS
@@ -44,11 +44,14 @@ La hoja **Diccionario$** debe contener estas columnas (con esos nombres):
 - TAMAÑO         (obligatorio para string; si se omite, se usa 255)
 
 Ejemplo mínimo:
-CAMPO, TIPO_DE_DATO, TAMAÑO
-CODIGO, string, 50
-DEN_SIEMB, double,
-MANT_PER, smallinteger,
-FECHA_REG, date,
+
+CAMPO 		TIPO_DE_DATO	TAMAÑO
+EXPEDIENTE	string		20
+DEN_SIEMB	single		4		
+MANT_PER	smallinteger	2
+FECHA_REG	date		8
+DAP_SEMB	Double		8
+INDIVIDUOS	Integer		4
 
 5) MAPA DE TIPOS (ANLA → ArcGIS)
 ---------------------------------
@@ -76,7 +79,7 @@ Notas:
    - OUT_TABLE_NAME: nombre de la tabla que se generará en OUT_GDB.
    - LOG_PATH: ruta del archivo de log (carpeta debe ser alcanzable).
 4. Verifica que el Excel tenga las hojas con **esos nombres exactos** y que Diccionario$ incluya las columnas requeridas.
-5. (Opcional) Si no usarás diccionario, deja SHEET_DICT pero el script tolera el fallo e inferirá TEXT(255).
+
 
 7) CÓMO EJECUTAR
 ----------------
@@ -87,7 +90,6 @@ A) ArcMap (ArcGIS Desktop 10.x):
 
 B) ArcGIS Pro:
    - Python Pane → pega el script completo → ejecuta.
-   - Si recibes errores de 'basestring/unicode', aplica el bloque de compatibilidad Py3 (ver Sección 8).
    - También puedes crear un Script Tool y parametrizar entradas.
 
 C) Script Tool (recomendado para operación repetible):
@@ -96,32 +98,17 @@ C) Script Tool (recomendado para operación repetible):
    - Define parámetros (Excel, GDBs, nombre de tabla, etc.).
    - Ejecuta desde el Toolbox.
 
-8) COMPATIBILIDAD ARC GIS PRO (PYTHON 3)
-----------------------------------------
-Si corres en ArcGIS Pro (Python 3), añade tras los imports:
-    try:
-        basestring
-    except NameError:
-        basestring = str
-    try:
-        unicode
-    except NameError:
-        unicode = str
-
-Y en la función log(), usa apertura con encoding (io.open):
-    import io
-    with io.open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(u"{}\n".format(msg))
-
-9) BUENAS PRÁCTICAS
+8) BUENAS PRÁCTICAS
 -------------------
 - Asegura que los nombres de columnas en Datos$ **coincidan exactamente** con los de CAMPO en Diccionario$.
-- En string, define TAMAÑO realista (si no, 255).
+- Usa en los campos que requieren dominio únicamente el dato en la lista (valor numérico NO TEXTO).
 - Evita acentos o espacios finales en nombres de campo.
 - No abras el Excel mientras corre el script.
+- No abras la GDB mientras corre el script, y tampoco en otra ventana de arcgis.
 - Dominios ANLA: este script **no** los aplica; sólo estructura/tipos. Aplica dominios después en la GDB si lo requieres.
+- No trabajar sobre la GDB de entrega a cliente. Mantener las GDB temporales que se crean automaticamente.
 
-10) ERRORES COMUNES
+9) ERRORES COMUNES
 -------------------
 - "Tipo no soportado en diccionario: ...":
   Revisa TIPO_DE_DATO (valores válidos: single, double, smallinteger, longinteger, string, date).
@@ -136,8 +123,7 @@ Y en la función log(), usa apertura con encoding (io.open):
 
 11) VALIDACIÓN POST-CARGA (SUGERENCIAS)
 ---------------------------------------
-- Agrega dominios y subtipos si aplica ANLA.
-- Crea índices sobre campos clave (por ejemplo, códigos/identificadores).
+- Carga con load la tabla sobre la GDB de entrega.
 - Compara recuento de filas entre Datos$ y tabla final.
 - Muestrea tipos de datos para confirmar conversiones (enteros, decimales, fechas).
 
