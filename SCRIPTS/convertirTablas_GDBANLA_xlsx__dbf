@@ -19,7 +19,7 @@ except NameError:
 
 # =================== CONFIG ===================
 # Rutas de entrada/salida y nombres clave.
-EXCEL_PATH     = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\MuestreoFloraResultados.xlsx"  # ruta al archivo Excel
+EXCEL_PATH     = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\MuestreoFloraResultados.xlsx"  # ruta al archivo Excel, debe tener r al primer caracter y se cambia la ruta entre comillas 
 SHEET_DATOS    = "Datos$"        # nombre de hoja con los datos. OJO: debe terminar en '$'
 SHEET_DICT     = "Diccionario$"  # nombre de hoja con el diccionario (CAMPO, TIPO, TAMAÑO). También con '$'
 WORK_GDB       = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\PruebasTBLoad.gdb"          # GDB temporal de trabajo
