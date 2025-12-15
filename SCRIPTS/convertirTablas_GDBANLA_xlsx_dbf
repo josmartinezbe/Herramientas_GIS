@@ -25,7 +25,7 @@ SHEET_DICT     = "Diccionario$"  # nombre de hoja con el diccionario (CAMPO, TIP
 WORK_GDB       = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\PruebasTBLoad.gdb"          # GDB temporal de trabajo
 OUT_GDB        = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\GDB_ANLA_sandbox.gdb"       # GDB de salida final
 OUT_TABLE_NAME = "MuestreoFloraResultados_load"                    # nombre de la tabla de salida (sin ruta)
-LOG_PATH = r"G:/Unidades compartidas/TERRASOS_SIG/MODELOS/ESTANDARES/TB ANLA/work/logs/clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
+LOG_PATH = r"G:\Unidades compartidas\TERRASOS_SIG\MODELOS\ESTANDARES\TB ANLA\work\logs\clean_{:%Y%m%d_%H%M}.log".format(datetime.datetime.now())
 
 # ==============================================
 
